@@ -289,21 +289,6 @@ Machine-specific values should not be hardcoded when deploying the worker.
 
 A local `.env` or configuration file can be used instead.
 
-### Secrets
-
-**Do not commit credentials or secrets to Git.**
-
-This includes:
-
-* Firebase service-account credentials
-* API keys
-* access tokens
-* passwords
-* private keys
-* `.env` files containing secrets
-
-The repository should contain `.env.example` or another template containing only placeholder values.
-
 ---
 
 ## Requirements
@@ -379,8 +364,6 @@ C:\rules
 ### 6. Configure Firebase
 
 Set up the Firebase Admin SDK credentials locally.
-
-**Do not add the credential file to the repository.**
 
 ### 7. Start the worker
 
