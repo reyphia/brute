@@ -612,49 +612,7 @@ Brute is designed for:
 
 Only use the system where password recovery or security testing is authorized.
 
-### Never commit
-
-```text
-Firebase service-account credentials
-.env
-Private keys
-API tokens
-Passwords
-Real recovered credentials
-Private dictionaries
-Real production hashes
-```
-
-Large dictionaries should remain on the local worker rather than being stored in GitHub.
-
-If a Firebase service-account key has ever been exposed publicly, it should be revoked and replaced.
-
----
-
-## Current Implementation
-
-| Feature                       | Status |
-| ----------------------------- | ------ |
-| Firebase task queue           | ✅      |
-| Python worker                 | ✅      |
-| Dictionary discovery          | ✅      |
-| Rule discovery                | ✅      |
-| Dictionary attack             | ✅      |
-| Dictionary + Rule attack      | ✅      |
-| Mask attack                   | ✅      |
-| Multiple dictionary files     | ✅      |
-| Automatic metadata publishing | ✅      |
-| Temporary file cleanup        | ✅      |
-| Real-time Hashcat progress    | 🚧     |
-| ETA calculation               | 🚧     |
-| Job cancellation              | 🚧     |
-| Pause / Resume                | 🚧     |
-| Worker heartbeat              | 🚧     |
-| GPU telemetry                 | 🚧     |
-| Multiple workers              | 🚧     |
-| WebSocket live updates        | 🚧     |
-
----
+Large dictionaries should remain on the local worker.
 
 ## Current Limitations
 
