@@ -485,8 +485,6 @@ C:\rules
 
 Configure the Firebase Admin SDK credentials locally.
 
-**Never commit the service-account JSON to GitHub.**
-
 ### Start Worker
 
 ```powershell
