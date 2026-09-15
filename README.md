@@ -315,7 +315,7 @@ Storage requirements depend mainly on the size of the dictionaries and rule sets
 ### 1. Clone the repository
 
 ```powershell
-git clone <repository-url>
+git clone https://github.com/reyphia/brute.git
 cd brute
 ```
 
@@ -324,12 +324,6 @@ cd brute
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-```
-
-### 3. Install dependencies
-
-```powershell
-pip install -r requirements.txt
 ```
 
 ### 4. Install Hashcat
