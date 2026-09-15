@@ -1,12 +1,14 @@
 # Brute
 
-**Remote Password-Recovery Orchestration Platform**
+**Remote password-recovery orchestration platform**
 
-Brute is a web-controlled password-recovery system for authorized security testing, password recovery, CTFs, and isolated research environments.
+Brute is a web-controlled system for running password-recovery workloads on a local GPU worker.
 
-The system separates the **remote control plane** from the **local GPU workload**: tasks are created through a web interface, stored in Firestore, and executed by a Python worker on a dedicated Windows machine running Hashcat.
+The web application is used to create and monitor jobs. A Python worker running on a Windows machine pulls pending jobs from Firestore and executes them with Hashcat.
 
-Large dictionaries and rule sets remain on the local worker and are never required to be uploaded through the web interface.
+Dictionaries and Hashcat rules stay on the worker instead of being uploaded to the web application.
+
+> **Authorized use only.** Use Brute only for systems, credentials, CTFs, or research environments where you have explicit permission to perform password recovery.
 
 ---
 
@@ -14,8 +16,8 @@ Large dictionaries and rule sets remain on the local worker and are never requir
 
 ```mermaid
 flowchart LR
-    A[Web Client] -->|Authentication| B[Firebase Auth]
-    A -->|Create Task| C[Firestore]
+    A[Web Client] -->|Auth| B[Firebase Auth]
+    A -->|Create Job| C[Firestore]
 
     C -->|Pending Job| D[Python Worker]
 
@@ -23,7 +25,7 @@ flowchart LR
 
     E -->|Dictionary| F[Local Dictionary]
     E -->|Dictionary + Rule| G[Local Dictionary + Rule]
-    E -->|Mask| H[Mask Pattern]
+    E -->|Mask| H[Mask]
 
     F --> I[Hashcat]
     G --> I
@@ -40,123 +42,103 @@ flowchart LR
     C -->|Status / Result| A
 ```
 
+### Components
+
+| Component       | Technology      | Role                                        |
+| --------------- | --------------- | ------------------------------------------- |
+| Web Client      | Web application | Authentication, job creation and monitoring |
+| Authentication  | Firebase Auth   | User authentication                         |
+| Backend         | Firestore       | Job queue, metadata and state               |
+| Worker          | Python          | Job processing and Hashcat orchestration    |
+| Recovery Engine | Hashcat         | GPU-accelerated password recovery           |
+| Dictionaries    | Local storage   | Wordlists used by the worker                |
+| Rules           | Local storage   | Hashcat rule files                          |
+
+The important part of the design is that **the control plane and compute workload are separated**.
+
+The web application handles jobs. The worker handles the actual workload.
+
 ---
 
-## System Components
+## Worker
 
-| Component       | Technology      | Purpose                                           |
-| --------------- | --------------- | ------------------------------------------------- |
-| Web Client      | Web application | Authentication, task configuration and monitoring |
-| Authentication  | Firebase Auth   | User authentication                               |
-| Task Backend    | Firestore       | Task queue, metadata and job state                |
-| Worker          | Python          | Task orchestration and Hashcat execution          |
-| Recovery Engine | Hashcat         | Local GPU workload                                |
-| Dictionaries    | Local HDD       | Wordlist storage                                  |
-| Rules           | Local HDD       | Hashcat rule storage                              |
+The worker is implemented in `agent.py`.
 
----
+At startup it:
 
-## Worker Architecture
-
-The local worker is implemented in `agent.py`.
+1. Initializes Firebase.
+2. Scans the local dictionary and rule directories.
+3. Publishes available metadata to Firestore.
+4. Waits for pending jobs.
+5. Validates the job configuration.
+6. Selects the requested attack mode.
+7. Runs Hashcat.
+8. Writes the result back to Firestore.
 
 ```mermaid
 flowchart TD
     A[agent.py] --> B[Firebase Admin SDK]
-
     A --> C[Dictionary Scanner]
     A --> D[Rule Scanner]
+    A --> E[Task Poller]
 
-    C --> E[C:\dicts]
-    D --> F[C:\rules]
+    C --> F[C:\dicts]
+    D --> G[C:\rules]
 
-    C --> G[Dictionary Metadata]
-    D --> H[Rule Metadata]
+    C --> H[Dictionary Metadata]
+    D --> I[Rule Metadata]
 
-    G --> I[Firestore]
-    H --> I
+    H --> J[Firestore]
+    I --> J
 
-    B --> J[Pending Task]
+    E --> K[Pending Job]
+    K --> L[Validate Job]
 
-    J --> K{Attack Mode}
+    L --> M{Attack Mode}
 
-    K -->|Dictionary| L[run_hashcat_single]
-    K -->|Mask| M[run_mask_attack]
+    M -->|Dictionary| N[Dictionary Handler]
+    M -->|Mask| O[Mask Handler]
 
-    L --> N[Hashcat]
-    M --> N
-
-    N --> O[Temporary Output]
-    O --> P[Recovery Result]
-
-    P --> I
-```
-
----
-
-## Worker Lifecycle
-
-```mermaid
-flowchart TD
-    A[Start Worker] --> B[Initialize Firebase]
-    B --> C[Scan Dictionaries]
-    C --> D[Scan Rules]
-    D --> E[Publish Metadata]
-    E --> F[Wait for Tasks]
-
-    F --> G{Pending Task?}
-
-    G -->|No| H[Wait]
-    H --> F
-
-    G -->|Yes| I[Mark as Running]
-
-    I --> J[Detect Hash Mode]
-    J --> K{Attack Mode}
-
-    K -->|Dictionary| L[Validate Dictionary]
-    L --> M[Validate Rule]
-    M --> N[Process Dictionary Files]
-
-    K -->|Mask| O[Validate Mask]
-
-    N --> P[Execute Hashcat]
+    N --> P[Hashcat]
     O --> P
 
-    P --> Q{Recovery Found?}
-
-    Q -->|Yes| R[Completed]
-    Q -->|No| S[Failed]
-
-    R --> T[Update Firestore]
-    S --> T
-
-    T --> F
+    P --> Q[Result Parser]
+    Q --> J
 ```
 
 ---
 
-## Task Lifecycle
+## Supported Attack Modes
+
+| Mode              | Description                                    | Status      |
+| ----------------- | ---------------------------------------------- | ----------- |
+| Dictionary        | Run a local dictionary against a supplied hash | Implemented |
+| Dictionary + Rule | Apply a local Hashcat rule to a dictionary     | Implemented |
+| Mask              | Run a Hashcat mask attack                      | Implemented |
+
+The worker selects the appropriate handler using the job's `attack_mode` field.
+
+---
+
+## Job Lifecycle
 
 ```mermaid
 stateDiagram-v2
     [*] --> pending
     pending --> running
-
     running --> completed
     running --> failed
-
     completed --> [*]
     failed --> [*]
 ```
 
 ### `pending`
 
-A task has been created and is waiting for the worker.
+The job has been created and is waiting for a worker.
 
 ### `running`
 
-The worker has accepted the task and started processing it.
+The worker has picked up the job and started processing it.
 
 ### `completed`
 
@@ -164,127 +146,22 @@ A recovery result was found.
 
 ### `failed`
 
-The workload completed without finding a result, or the task configuration was invalid.
+The workload finished without a result, or the job configuration was invalid.
 
 ---
 
-## Attack Modes
+## Local Storage
 
-| Mode              | Description                                          | Status        |
-| ----------------- | ---------------------------------------------------- | ------------- |
-| Dictionary        | Process a local dictionary against the supplied hash | ✅ Implemented |
-| Dictionary + Rule | Apply a local Hashcat rule to a dictionary           | ✅ Implemented |
-| Mask              | Execute a Hashcat mask attack                        | ✅ Implemented |
+The worker expects dictionaries and rules to be stored locally.
 
-The worker selects the workflow using the task's `attack_mode` field.
-
----
-
-## Dictionary Architecture
-
-Dictionaries are stored locally on the worker machine.
-
-The worker automatically scans:
+Default directories:
 
 ```text
 C:\dicts
-```
-
-A dictionary can be a single file:
-
-```text
-C:\
-└── dicts\
-    └── passwords.txt
-```
-
-or a collection of files:
-
-```text
-C:\
-└── dicts\
-    └── large-dictionary\
-        ├── part-01.txt
-        ├── part-02.txt
-        ├── part-03.txt
-        └── part-04.txt
-```
-
-When a directory is selected, the worker processes its files sequentially.
-
-```mermaid
-flowchart TD
-    A[Dictionary Collection] --> B[part-01.txt]
-    B --> C{Found?}
-
-    C -->|Yes| D[Return Result]
-    C -->|No| E[part-02.txt]
-
-    E --> F{Found?}
-    F -->|Yes| D
-    F -->|No| G[part-03.txt]
-
-    G --> H{Found?}
-    H -->|Yes| D
-    H -->|No| I[Continue]
-
-    I --> J[Next Dictionary File]
-```
-
-This allows large wordlists to be split into multiple files while keeping them entirely on the worker machine.
-
----
-
-## Rule Architecture
-
-Rules are stored locally under:
-
-```text
 C:\rules
 ```
 
-Example:
-
-```text
-C:\
-└── rules\
-    ├── best64.rule
-    ├── custom.rule
-    └── ...
-```
-
-The worker automatically discovers files ending in:
-
-```text
-.rule
-```
-
-Available rules are published as metadata to Firestore.
-
-A `none` option is also available when no rule should be applied.
-
----
-
-## Local Storage Architecture
-
-```mermaid
-flowchart LR
-    A[Windows Worker] --> B[C:\]
-
-    B --> C[dicts]
-    B --> D[rules]
-    B --> E[hashcat]
-    B --> F[credentials]
-    B --> G[Worker]
-
-    C --> H[Wordlists]
-    D --> I[Hashcat Rules]
-    E --> J[Hashcat Engine]
-    F --> K[Firebase Admin Credentials]
-    G --> L[agent.py]
-```
-
-Recommended layout:
+A possible worker layout:
 
 ```text
 C:\
@@ -297,15 +174,12 @@ C:\
 │   │   ├── part-02.txt
 │   │   └── part-03.txt
 │   │
-│   ├── custom\
-│   │   └── passwords.txt
-│   │
-│   └── ...
+│   └── custom\
+│       └── passwords.txt
 │
 ├── rules\
 │   ├── best64.rule
-│   ├── custom.rule
-│   └── ...
+│   └── custom.rule
 │
 └── brute\
     ├── agent.py
@@ -313,43 +187,24 @@ C:\
     └── .env
 ```
 
----
+Directories can contain multiple dictionary files. When a collection is selected, the worker processes the files sequentially.
 
-## Hash Handling
+```mermaid
+flowchart TD
+    A[Dictionary Collection] --> B[part-01.txt]
+    B --> C{Found?}
 
-The current implementation performs basic automatic hash-mode detection.
+    C -->|Yes| D[Return Result]
+    C -->|No| E[part-02.txt]
 
-Currently implemented modes:
+    E --> F{Found?}
+    F -->|Yes| D
+    F -->|No| G[Next File]
 
-```text
-22000
-2500
+    G --> H[Continue]
 ```
 
-If the implemented detection logic does not identify another format, the worker currently falls back to `22000`.
-
-Hash-mode detection is intentionally simple in the current version and can be expanded later.
-
----
-
-## Hashcat Execution
-
-Dictionary workloads use Hashcat with:
-
-```text
--a 0
--w 3
---outfile-format 2
---potfile-disable
-```
-
-Mask workloads use:
-
-```text
--a 3
-```
-
-The worker creates temporary hash and output files, waits for Hashcat to finish, reads the result and removes the temporary files.
+Only dictionary and rule **metadata** is synchronized with Firestore. The actual files remain on the worker.
 
 ---
 
@@ -362,38 +217,61 @@ C:\dicts
 C:\rules
 ```
 
-and publishes their metadata to:
+and publishes information about the available files to:
 
 ```text
 metadata/dictionary_rules
 ```
 
-The actual dictionary and rule contents remain local.
+The web client can then display the available dictionaries and rules without receiving their contents.
 
-```mermaid
-flowchart TD
-    A[Worker Startup] --> B[Scan C:\dicts]
-    B --> C[Scan C:\rules]
+The current refresh interval is **1 hour**.
 
-    C --> D[Build Metadata]
+---
 
-    D --> E[Firestore]
+## Hash Handling
 
-    E --> F[Web Client]
+The current worker includes basic automatic hash-mode detection.
 
-    F --> G[Available Dictionaries]
-    F --> H[Available Rules]
+Supported modes:
+
+```text
+22000
+2500
 ```
 
-The current metadata refresh interval is **1 hour**.
+If the detection logic does not identify a supported format, the worker currently falls back to `22000`.
+
+Hash detection is intentionally limited to the formats currently implemented by the project.
+
+---
+
+## Hashcat
+
+Dictionary attacks use:
+
+```text
+-a 0
+-w 3
+--outfile-format 2
+--potfile-disable
+```
+
+Mask attacks use:
+
+```text
+-a 3
+```
+
+The worker creates temporary input/output files for the workload, waits for Hashcat to finish, parses the result and removes the temporary files.
 
 ---
 
 ## Configuration
 
-The worker uses local paths for its dependencies.
+The worker currently uses local paths for its dependencies.
 
-Example configuration:
+Example:
 
 ```python
 HASHCAT_PATH = r"C:\hashcat\hashcat.exe"
@@ -407,7 +285,24 @@ POLL_INTERVAL = 30
 METADATA_UPDATE_INTERVAL = 3600
 ```
 
-Machine-specific configuration should eventually be moved to environment variables or an external configuration file.
+Machine-specific values should not be hardcoded when deploying the worker.
+
+A local `.env` or configuration file can be used instead.
+
+### Secrets
+
+**Do not commit credentials or secrets to Git.**
+
+This includes:
+
+* Firebase service-account credentials
+* API keys
+* access tokens
+* passwords
+* private keys
+* `.env` files containing secrets
+
+The repository should contain `.env.example` or another template containing only placeholder values.
 
 ---
 
@@ -424,104 +319,82 @@ Machine-specific configuration should eventually be moved to environment variabl
 
 ### Hardware
 
-A compatible GPU is recommended for the intended Hashcat workloads.
+A compatible GPU is recommended for Hashcat workloads.
 
-Required storage depends on the size of the locally maintained dictionaries and rule sets.
+Storage requirements depend mainly on the size of the dictionaries and rule sets stored on the worker.
 
 ---
 
 ## Installation
 
-### Clone
+### 1. Clone the repository
 
 ```powershell
 git clone <repository-url>
 cd brute
 ```
 
-### Virtual Environment
+### 2. Create a virtual environment
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 ```
 
-### Install Dependencies
+### 3. Install dependencies
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-### Hashcat
+### 4. Install Hashcat
 
-Install Hashcat locally.
+Install Hashcat on the worker machine.
 
-Example:
+The example configuration expects:
 
 ```text
 C:\hashcat\hashcat.exe
 ```
 
-### Create Local Storage
+### 5. Create local directories
 
 ```powershell
 mkdir C:\dicts
 mkdir C:\rules
 ```
 
-Place authorized dictionaries under:
+Place authorized dictionaries in:
 
 ```text
 C:\dicts
 ```
 
-and Hashcat rule files under:
+and Hashcat rule files in:
 
 ```text
 C:\rules
 ```
 
-### Firebase
+### 6. Configure Firebase
 
-Configure the Firebase Admin SDK credentials locally.
+Set up the Firebase Admin SDK credentials locally.
 
-### Start Worker
+**Do not add the credential file to the repository.**
+
+### 7. Start the worker
 
 ```powershell
 python agent.py
 ```
 
-The worker initializes Firebase, discovers available dictionaries and rules, publishes metadata and begins polling for pending tasks.
+The worker will initialize Firebase, scan the local storage, publish metadata and start polling for pending jobs.
 
 ---
 
-## Task Flow
+## Job Format
 
-```mermaid
-sequenceDiagram
-    participant U as Web Client
-    participant F as Firestore
-    participant W as Python Worker
-    participant H as Hashcat
-    participant D as Local Storage
-
-    U->>F: Create recovery task
-    W->>F: Poll pending tasks
-    F-->>W: Return task
-
-    W->>D: Load dictionary / rule
-    W->>H: Start workload
-    H-->>W: Recovery result
-
-    W->>F: Update task status
-    F-->>U: Status / result
-```
-
----
-
-## Task Structure
-
-Dictionary task:
+### Dictionary job
 
 ```json
 {
@@ -533,7 +406,7 @@ Dictionary task:
 }
 ```
 
-Mask task:
+### Mask job
 
 ```json
 {
@@ -544,13 +417,13 @@ Mask task:
 }
 ```
 
-The schema may evolve as the web application develops.
+The job schema may change as the web application evolves.
 
 ---
 
-## Result Handling
+## Results
 
-Successful recovery:
+A successful recovery is stored as:
 
 ```json
 {
@@ -560,7 +433,7 @@ Successful recovery:
 }
 ```
 
-Unsuccessful recovery:
+If no result is found:
 
 ```json
 {
@@ -571,6 +444,30 @@ Unsuccessful recovery:
 ```
 
 The worker also records a completion timestamp.
+
+---
+
+## Task Flow
+
+```mermaid
+sequenceDiagram
+    participant U as Web Client
+    participant F as Firestore
+    participant W as Worker
+    participant H as Hashcat
+    participant D as Local Storage
+
+    U->>F: Create job
+    W->>F: Poll for jobs
+    F-->>W: Pending job
+
+    W->>D: Load dictionary / rule
+    W->>H: Start workload
+    H-->>W: Result
+
+    W->>F: Update job
+    F-->>U: Status / result
+```
 
 ---
 
@@ -586,7 +483,7 @@ brute/
 └── .env.example
 ```
 
-The local worker environment is separate:
+The large local datasets and machine-specific files are intentionally kept outside the repository:
 
 ```text
 C:\
@@ -596,156 +493,18 @@ C:\
 └── brute\
 ```
 
-This separation keeps large local datasets and machine-specific dependencies outside the Git repository.
-
 ---
 
-## Security & Privacy
+## Limitations
 
-Brute is designed for:
+Current limitations:
 
-* Authorized password recovery
-* Personal security laboratories
-* CTF environments
-* Controlled security research
-* Systems owned or explicitly authorized for testing
-
-Only use the system where password recovery or security testing is authorized.
-
-Large dictionaries should remain on the local worker.
-
-## Current Limitations
-
-### Progress Reporting
-
-The current worker does not yet expose real-time Hashcat telemetry.
-
-At the moment, task progress is initialized and updated to `100` after the workload finishes.
-
-Future versions can expose:
-
-* Current progress
-* Hashrate
-* ETA
-* Candidates tested
-* GPU utilization
-
-### Worker Management
-
-The current architecture is primarily designed around a single worker.
-
-Multiple workers can be introduced later through worker identification, leases and task ownership.
-
-### Configuration
-
-Machine-specific paths are currently represented as local configuration values and should eventually be moved into environment variables.
-
-### Hash Detection
-
-Automatic hash-mode detection currently covers only the formats implemented by the worker.
-
----
-
-## Roadmap
-
-```text
-[x] Firebase task queue
-[x] Local Python worker
-[x] Dictionary discovery
-[x] Rule discovery
-[x] Dictionary attacks
-[x] Rule-based dictionary attacks
-[x] Mask attacks
-[x] Task result reporting
-[x] Temporary file cleanup
-
-[ ] Real-time Hashcat progress
-[ ] Speed / ETA reporting
-[ ] Job cancellation
-[ ] Pause / resume
-[ ] Worker heartbeat
-[ ] GPU telemetry
-[ ] Worker online/offline status
-[ ] Multiple GPU workers
-[ ] Job history
-[ ] Improved hash-mode detection
-[ ] External configuration
-[ ] Stronger worker authentication
-[ ] WebSocket live updates
-```
-
----
-
-## Development Architecture
-
-```mermaid
-flowchart TD
-    A[agent.py] --> B[Firebase Admin SDK]
-
-    A --> C[Configuration]
-    A --> D[Dictionary Scanner]
-    A --> E[Rule Scanner]
-    A --> F[Task Poller]
-
-    D --> G[C:\dicts]
-    E --> H[C:\rules]
-
-    F --> I[Pending Task]
-
-    I --> J[Task Validation]
-    J --> K[Hash Mode Detection]
-
-    K --> L{Attack Mode}
-
-    L -->|Dictionary| M[Dictionary Handler]
-    L -->|Mask| N[Mask Handler]
-
-    M --> O[Hashcat]
-    N --> O
-
-    O --> P[Result Parser]
-    P --> Q[Firestore]
-
-    Q --> F
-```
-
----
-
-## Design Principles
-
-### Remote Control, Local Compute
-
-The web interface is responsible for task management.
-
-The worker is responsible for the actual compute workload.
-
-```text
-Web
- │
- ▼
-Firestore
- │
- ▼
-Worker
- │
- ├── Local dictionaries
- ├── Local rules
- └── Hashcat / GPU
-```
-
-This avoids transferring large dictionaries through the web application.
-
-### Local Data Ownership
-
-The worker keeps dictionaries and rules on the local machine.
-
-Only metadata required by the web interface is synchronized.
-
-### Stateless Task Execution
-
-Each task contains the information required for the worker to select an attack workflow and execute it.
-
-Temporary files are created only for the duration of the workload and removed afterwards.
+* Hash detection supports only the implemented formats.
+* Progress is currently reported at job completion rather than as live Hashcat telemetry.
+* The worker architecture currently assumes a single worker.
+* Machine-specific configuration still relies on local paths.
+* There is no job cancellation or pause/resume support yet.
+* Worker authentication can be strengthened further.
 
 ---
 
@@ -753,4 +512,4 @@ Temporary files are created only for the duration of the workload and removed af
 
 MIT License
 
-See [`LICENSE`](LICENSE) for the complete license text.
+See [`LICENSE`](LICENSE) for the full license text.
