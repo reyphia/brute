@@ -452,20 +452,6 @@ sequenceDiagram
     F-->>U: Status / result
 ```
 
----
-
-## Project Structure
-
-```text
-brute/
-├── agent.py
-├── README.md
-├── LICENSE
-├── requirements.txt
-├── .gitignore
-└── .env.example
-```
-
 The large local datasets and machine-specific files are intentionally kept outside the repository:
 
 ```text
