@@ -1,0 +1,9 @@
+{
+  "hashcat_path": "C:\\hashcat\\hashcat.exe",
+  "credentials_path": "C:\\brute\\firebase-credentials.json",
+  "project_id": "brute-me",
+  "dict_dir": "C:\\dicts",
+  "rule_dir": "C:\\rules",
+  "poll_interval_seconds": 30,
+  "metadata_update_interval_seconds": 3600
+}
